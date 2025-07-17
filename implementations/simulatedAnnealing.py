@@ -29,6 +29,13 @@ def _simulated_annealing(t0: float, num_steps: int, state0, neighbor_fn, cost_fn
     - neighbor_fn (function): Function to generate a neighbor state.
     - cost_fn (function): Function to compute the cost of a state.
     - minimize (bool): If True, minimize the cost; if False, maximize the cost.
+
+    Returns:
+    - best_state: The best state found during the annealing process.
+    - best_cost: The cost of the best state found.
+    - progress_best: List of best costs at each step.
+    - progress_current: List of current costs at each step.
+    - temperatures: List of temperatures at each step.
     '''
     current_state = state0
     current_cost = cost_fn(current_state)
@@ -40,7 +47,7 @@ def _simulated_annealing(t0: float, num_steps: int, state0, neighbor_fn, cost_fn
     temperatures = []
 
     pbar = tqdm(range(num_steps))
-    update_every = num_steps // 10000
+    update_every = max(num_steps // 10000, 1)
 
     for k in range(num_steps):
         temperature = get_temp(t0, k)
@@ -57,7 +64,7 @@ def _simulated_annealing(t0: float, num_steps: int, state0, neighbor_fn, cost_fn
 
         if k % update_every == 0:
             pbar.update(update_every)
-            pbar.set_description(f'temp {temperature:.2f}, best {best_cost:.2f}')
+            pbar.set_description(f'temp {temperature:.2f}, best {best_cost}')
 
     return best_state, best_cost, progress_best, progress_current, temperatures
 
