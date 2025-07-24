@@ -109,7 +109,7 @@ def simulated_annealing(t0: float, num_steps: int, state0, neighbor_fn, cost_fn,
     return _simulated_annealing(t0, num_steps, state0, neighbor_fn, cost_fn, next_state_sa, minimize)
 
 
-def simulated_diffusion(t0: float, num_steps: int, state0, neighbors_fn, cost_fn, minimize=True):
+def informed_mcmc(t0: float, num_steps: int, state0, neighbors_fn, cost_fn, minimize=True):
     return _simulated_annealing(t0, num_steps, state0, neighbors_fn, cost_fn, next_state_diffusion, minimize)
 
 
@@ -217,5 +217,5 @@ if __name__ == "__main__":
 
     t0 = 50.0
     num_steps = 10000
-    best_state, best_cost, progress_best, progress_current, temperatures = simulated_diffusion(t0, num_steps, initial_state, neighbors_and_cost, tsp_cost)
+    best_state, best_cost, progress_best, progress_current, temperatures = informed_mcmc(t0, num_steps, initial_state, neighbors_and_cost, tsp_cost)
     plot_progress(progress_best, progress_current, temperatures)
