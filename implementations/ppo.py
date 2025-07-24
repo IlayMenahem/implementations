@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 from tqdm import tqdm
-
+from implementations.utils import plot_learning_process
 
 def compute_gae(rewards: list[float], values: list[float], dones: list[bool], gamma: float, gae_lambda: float) -> list[float]:
     advantages = []
@@ -20,14 +20,18 @@ def compute_gae(rewards: list[float], values: list[float], dones: list[bool], ga
 
 
 def ppo_update(actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim.Optimizer,
-    optimizer_critic: torch.optim.Optimizer, states: list, actions: torch.Tensor, old_log_probs: torch.Tensor,
+    optimizer_critic: torch.optim.Optimizer, states: torch.Tensor, actions: torch.Tensor, old_log_probs: torch.Tensor,
     returns: torch.Tensor, advantages: torch.Tensor, clip_epsilon: float, entropy_coeff: float, value_loss_coeff: float,
-    clip_range_vf: float, max_grad_norm: float, target_kl: float) -> tuple[float, float, float, float]:
+    clip_range_vf: float, max_grad_norm: float, target_kl: float, device: torch.device) -> tuple[float, float, float, float]:
 
-    actions = torch.tensor(actions)
-    old_log_probs = torch.tensor(old_log_probs)
-    returns = torch.tensor(returns)
-    advantages = torch.tensor(advantages)
+    # Move all tensors to device
+    states = states.to(device)
+    actions = actions.to(device)
+    old_log_probs = old_log_probs.to(device)
+    returns = returns.to(device)
+    advantages = advantages.to(device)
+
+    # Normalize advantages
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     probs = actor(states)
@@ -63,7 +67,7 @@ def ppo_update(actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim
     return policy_loss.item(), value_loss.item(), entropy.item(), approx_kl
 
 
-def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batch_size: int, gamma: float) -> tuple[list, list[int], list[float], list[bool], list[float], list[float], float]:
+def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batch_size: int, gamma: float, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, list[float], list[bool], torch.Tensor, torch.Tensor, float]:
     states, actions, rewards, dones, log_probs, values = [], [], [], [], [], []
     episode_rewards: list[float] = []
     ep_reward: float = 0
@@ -72,58 +76,85 @@ def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batc
     done: bool = False
 
     pbar = tqdm(total=batch_size, desc="Collecting trajectories", leave=False)
-    for _ in range(batch_size):
-        probs = actor(state)
-        dist = Categorical(probs=probs)
-        action = dist.sample()
-        log_prob: float = dist.log_prob(action).item()
-        value: float = critic(state).item()
+    with torch.no_grad():
+        for _ in range(batch_size):
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
 
-        next_state, reward, terminated, truncated, _ = env.step(action.item())
-        done = terminated or truncated
+            probs = actor(state_tensor)
+            dist = Categorical(probs=probs)
+            action = dist.sample()
+            log_prob: float = dist.log_prob(action).item()
+            value: float = critic(state_tensor).item()
 
-        states.append(state)
-        actions.append(action.item())
-        rewards.append(reward)
-        dones.append(done)
-        log_probs.append(log_prob)
-        values.append(value)
+            next_state, reward, terminated, truncated, _ = env.step(action.item())
+            done = terminated or truncated
 
-        ep_reward += float(reward)
-        state = next_state
-        pbar.update(1)
+            states.append(state)
+            actions.append(action.item())
+            rewards.append(reward)
+            dones.append(done)
+            log_probs.append(log_prob)
+            values.append(value)
 
-        if done:
-            episode_rewards.append(ep_reward)
-            ep_reward = 0
-            state, _ = env.reset()
-            done = False
+            ep_reward += float(reward)
+            state = next_state
+            pbar.update(1)
+
+            if done:
+                episode_rewards.append(ep_reward)
+                ep_reward = 0
+                state, _ = env.reset()
+                done = False
 
     pbar.close()
     avg_reward: float = sum(episode_rewards) / len(episode_rewards) if episode_rewards else 0
 
-    return states, actions, rewards, dones, log_probs, values, avg_reward
+    # Convert to batched tensors
+    states_tensor = torch.tensor(np.array(states), dtype=torch.float32)
+    actions_tensor = torch.tensor(actions, dtype=torch.long)
+    log_probs_tensor = torch.tensor(log_probs, dtype=torch.float32)
+    values_tensor = torch.tensor(values, dtype=torch.float32)
+
+    return states_tensor, actions_tensor, rewards, dones, log_probs_tensor, values_tensor, avg_reward
 
 
 def train_ppo(env: gym.Env, actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim.Optimizer,
     optimizer_critic: torch.optim.Optimizer, batch_size: int, num_epochs: int, gamma: float,
     clip_epsilon: float, gae_lambda: float, entropy_coeff: float, value_loss_coeff: float,
-    clip_range_vf: float, target_kl: float, max_grad_norm: float)-> tuple[nn.Module, nn.Module]:
+    clip_range_vf: float, target_kl: float, max_grad_norm: float, device: torch.device)-> tuple[nn.Module, nn.Module]:
+
+    actor.to(device)
+    critic.to(device)
+
+    episode_rewards = []
+    policy_losses = []
+    value_losses = []
 
     for epoch in tqdm(range(num_epochs), desc="PPO epochs"):
-        states, actions, rewards, dones, old_log_probs, values, avg_reward = collect_trajectories(env, actor, critic, batch_size, gamma)
-        advantages = compute_gae(rewards, values, dones, gamma, gae_lambda)
-        returns = [adv + val for adv, val in zip(advantages, values)]
+        states, actions, rewards, dones, old_log_probs, values, avg_reward = collect_trajectories(env, actor, critic, batch_size, gamma, device)
+        advantages = compute_gae(rewards, values.cpu().numpy().tolist(), dones, gamma, gae_lambda)
+        returns = [adv + val for adv, val in zip(advantages, values.cpu().numpy().tolist())]
+
+        # Convert to tensors
+        advantages_tensor = torch.tensor(advantages, dtype=torch.float32)
+        returns_tensor = torch.tensor(returns, dtype=torch.float32)
 
         policy_loss, value_loss, entropy, approx_kl = ppo_update(actor, critic, optimizer_actor, optimizer_critic,
-                                                                 states, actions, old_log_probs, returns, advantages,
+                                                                 states, actions, old_log_probs, returns_tensor, advantages_tensor,
                                                                  clip_epsilon, entropy_coeff, value_loss_coeff,
-                                                                 clip_range_vf, max_grad_norm, target_kl)
+                                                                 clip_range_vf, max_grad_norm, target_kl, device)
+
+        episode_rewards.append(avg_reward)
+        policy_losses.append(policy_loss)
+        value_losses.append(value_loss)
+
         tqdm.write(f"Epoch {epoch + 1}: Avg Reward {avg_reward:.2f}  Policy Loss {policy_loss:.10f}  Value Loss {value_loss:.3f}  Entropy {entropy:.3f}  KL {approx_kl:.6f}")
 
         if approx_kl > target_kl:
             print(f"Early stopping at epoch {epoch + 1} due to reaching target KL (KL: {approx_kl:.6f} > {target_kl})")
             break
+
+    plot_learning_process(episode_rewards, policy_losses, value_losses)
 
     return actor, critic
 
@@ -170,6 +201,7 @@ class Critic(nn.Module):
 
 
 if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = gym.make("CartPole-v1", max_episode_steps=1024)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
@@ -181,4 +213,4 @@ if __name__ == "__main__":
 
     train_ppo(env, actor, critic, optimizer_actor, optimizer_critic, 4096, 250,
         gamma=0.99, clip_epsilon=0.2, gae_lambda=0.95, entropy_coeff=0.01,
-        value_loss_coeff=0.5, clip_range_vf=0.2, target_kl=0.03, max_grad_norm=0.5)
+        value_loss_coeff=0.5, clip_range_vf=0.2, target_kl=0.03, max_grad_norm=0.5, device=device)
