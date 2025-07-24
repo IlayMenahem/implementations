@@ -6,6 +6,7 @@ from collections import namedtuple
 from tqdm import tqdm
 import gymnasium as gym
 import copy
+from implementations.utils import plot_learning_process
 
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
@@ -59,7 +60,7 @@ class PrioritizedReplayBuffer:
             self.priorities[idx] = priority
 
 
-def compute_ddqn_loss(batch, indices, weights, q_net, target_net, gamma, optimizer, replay_buffer, device):
+def compute_ddqn_loss(batch, indices, weights, q_net, target_net, gamma, optimizer, replay_buffer, device, max_grad_norm=1.0):
     states, action, reward, next_states, done = batch
 
     actions = torch.tensor(action, dtype=torch.int64).unsqueeze(1).to(device)
@@ -78,6 +79,7 @@ def compute_ddqn_loss(batch, indices, weights, q_net, target_net, gamma, optimiz
 
     optimizer.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(q_net.parameters(), max_grad_norm)
     optimizer.step()
 
     new_priorities = td_errors.abs().detach().cpu().numpy().squeeze() + 1e-6
@@ -94,7 +96,7 @@ def epsilon_schedule(step: int, start: float = 1.0, end: float = 0.05, decay_ste
 
 
 def train_dqn(env, replay_buffer, target_update_freq: int, gamma: float, q_network: nn.Module,
-              optimizer, num_steps: int, batch_size: int, device=torch.device('cpu')):
+              optimizer, num_steps: int, batch_size: int, device=torch.device('cpu'), max_grad_norm=1.0):
 
     q_network = q_network.to(device)
     target_network = copy.deepcopy(q_network).to(device)
@@ -128,13 +130,15 @@ def train_dqn(env, replay_buffer, target_update_freq: int, gamma: float, q_netwo
 
         if len(replay_buffer.buffer) >= batch_size:
             batch, indices, weights = replay_buffer.sample(batch_size)
-            loss = compute_ddqn_loss(batch, indices, weights, q_network, target_network, gamma, optimizer, replay_buffer, device)
+            loss = compute_ddqn_loss(batch, indices, weights, q_network, target_network, gamma, optimizer, replay_buffer, device, max_grad_norm)
             losses.append(loss)
 
         if step % target_update_freq == 0:
             target_network.load_state_dict(q_network.state_dict())
 
         progress_bar.update(1)
+
+    plot_learning_process(rewards, losses, losses)
 
     return losses, rewards, q_network
 
@@ -168,11 +172,11 @@ if __name__ == '__main__':
             return x
 
 
-    env = gym.make('CartPole-v1', max_episode_steps=2048)
+    env = gym.make('CartPole-v1', max_episode_steps=512)
     device = torch.device('cpu')
 
     q_net = QNetwork(4, 2)
     optimizer = torch.optim.Adam(q_net.parameters(), lr=1e-3)
     replay_buffer = PrioritizedReplayBuffer(10000)
 
-    losses = train_dqn(env, replay_buffer, 1000, 0.99, q_net, optimizer, 250000, 512, device)
+    losses = train_dqn(env, replay_buffer, 1000, 0.99, q_net, optimizer, 100000, 512, device, max_grad_norm=1.0)
