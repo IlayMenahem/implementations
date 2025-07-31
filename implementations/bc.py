@@ -37,7 +37,7 @@ def train_model(policy, train_dataloader, val_dataloader, num_epochs, optimizer,
     - num_epochs (int): Number of epochs to train.
     - optimizer (torch.optim.Optimizer): Optimizer for updating the policy.
     - loss_fn (callable): Loss function to compute the loss of a batch.
-    - accuercy_fn (callable): Function to compute accuracy of the model.
+    - accuracy_fn (callable): Function to compute accuracy of the model.
     - scheduler (Optional[torch.optim.lr_scheduler._LRScheduler]): Learning rate scheduler.
     - default_device (str): Device to run the training on ('cpu', 'cuda', or 'mps').
     - checkpointer (Optional[callable]): Function to save checkpoints during training.
@@ -48,6 +48,7 @@ def train_model(policy, train_dataloader, val_dataloader, num_epochs, optimizer,
     - losses_validation (list): List of average validation losses per epoch.
     '''
     torch.set_default_device(default_device)
+    policy.to(default_device)
 
     losses_train = []
     losses_validation = []
