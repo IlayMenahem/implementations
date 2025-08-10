@@ -1,21 +1,6 @@
 import matplotlib.pyplot as plt
-import numpy as np
-from dataclasses import dataclass
-
-@dataclass(frozen=True)
-class GroebnerState:
-    ideal: list[np.ndarray]
-    selectables: list[tuple]
-
-
-@dataclass(frozen=True)
-class TimeStep:
-    obs: GroebnerState
-    action: tuple[int, ...] | int
-    reward: float
-    next_obs: GroebnerState
-    done: bool
-
+import gymnasium as gym
+from torch import nn
 
 def plot_learning_process(scores: list[float], vals1: list[float], vals2: list[float]) -> None:
     '''
@@ -51,3 +36,25 @@ def plot_learning_process(scores: list[float], vals1: list[float], vals2: list[f
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+
+
+def validate(env: gym.Env, model: nn.Module):
+    '''
+    validate the model on the environment
+
+    Args:
+    - env: The environment to validate the model on.
+    - model: The model to validate.
+    '''
+    state, _ = env.reset()
+    done = False
+    total_reward = 0.0
+
+    while not done:
+        action = model(state).argmax().item()
+        next_state, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+        total_reward += reward
+        state = next_state
+
+    return total_reward
