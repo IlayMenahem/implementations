@@ -92,7 +92,7 @@ def next_state_sa(neighbor_fn, current_state, cost_fn, current_cost, minimize, t
 def next_state_diffusion(neighbors_fn, current_state, cost_fn, current_cost, minimize, temperature):
     neighbors_state, neighbors_cost = neighbors_fn(current_state)
 
-    weights = np.array(current_cost / temperature)
+    weights = neighbors_cost / temperature
     if not minimize:
         weights = -weights
 
@@ -137,7 +137,7 @@ def plot_progress(progress_best, progress_current, temperatures):
 
 
 if __name__ == "__main__":
-    @lru_cache(maxsize=2**13)
+    @lru_cache
     def tsp_cost(path: tuple):
         cost = 0
 
@@ -160,7 +160,7 @@ if __name__ == "__main__":
         return new_path
 
 
-    @lru_cache(maxsize=None)
+    @lru_cache
     def tsp_neighbors(path: tuple):
         neighbors = []
 
@@ -173,7 +173,7 @@ if __name__ == "__main__":
         return neighbors
 
 
-    @lru_cache(maxsize=None)
+    @lru_cache
     def neighbors_and_cost(path: tuple):
         neighbors = tsp_neighbors(path)
         costs = np.array([tsp_cost(neighbor) for neighbor in neighbors])
@@ -210,8 +210,8 @@ if __name__ == "__main__":
         graph.edges[u, v]['weight'] = random.randint(1, 100)
 
     initial_state = tuple(range(number_of_cities))
-    t0 = 75.0
-    num_steps = 100000
+    t0 = 100.0
+    num_steps = 1000000
     best_state, best_cost, progress_best, progress_current, temperatures = simulated_annealing(t0, num_steps, initial_state, tsp_neighbor, tsp_cost)
     plot_progress(progress_best, progress_current, temperatures)
 
