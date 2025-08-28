@@ -92,7 +92,7 @@ def next_state_sa(neighbor_fn, current_state, cost_fn, current_cost, minimize, t
 def next_state_diffusion(neighbors_fn, current_state, cost_fn, current_cost, minimize, temperature):
     neighbors_state, neighbors_cost = neighbors_fn(current_state)
 
-    weights = current_cost - neighbors_cost / temperature
+    weights = np.array(current_cost / temperature)
     if not minimize:
         weights = -weights
 
