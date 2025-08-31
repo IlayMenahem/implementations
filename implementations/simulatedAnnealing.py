@@ -54,7 +54,7 @@ def _simulated_annealing(t0: float, num_steps: int, state0, neighbor_fn, cost_fn
 
         current_state, current_cost = next_state_fn(neighbor_fn, current_state, cost_fn, current_cost, minimize, temperature)
 
-        if current_cost < best_cost:
+        if (minimize and current_cost < best_cost) or (not minimize and current_cost > best_cost):
             best_state = current_state
             best_cost = current_cost
 
