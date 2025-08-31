@@ -74,11 +74,11 @@ def next_state_sa(neighbor_fn, current_state, cost_fn, current_cost, minimize, t
     neighbor_cost = cost_fn(neighbor_state)
 
     delta_cost = neighbor_cost - current_cost
-    if not minimize:
-        neighbor_cost = -neighbor_cost
 
-    if (delta_cost > 0 and minimize) or (delta_cost < 0 and not minimize):
+    if minimize and delta_cost > 0:
         probability = math.exp(-delta_cost / temperature)
+    elif not minimize and delta_cost < 0:
+        probability = math.exp(delta_cost / temperature)
     else:
         probability = 1.0
 
@@ -93,10 +93,8 @@ def next_state_diffusion(neighbors_fn, current_state, cost_fn, current_cost, min
     neighbors_state, neighbors_cost = neighbors_fn(current_state)
 
     weights = neighbors_cost / temperature
-    if not minimize:
-        weights = -weights
 
-    probabilities = softmax(weights)
+    probabilities = softmax(-weights if minimize else weights)
     chosen_index = np.random.choice(len(neighbors_state), p=probabilities)
 
     current_state = neighbors_state[chosen_index]
@@ -186,6 +184,9 @@ if __name__ == "__main__":
         Brute force solution to the TSP problem.
         Returns the optimal path and its cost.
         """
+        if number_of_cities == 0:
+            return [], 0
+
         optimal_cost = float('inf')
         optimal_path = None
 
