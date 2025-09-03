@@ -36,32 +36,43 @@ def accuracy_fn(model, data, labels):
     return accuracy
 
 
+class EarlyStopping:
+    """Early stopping utility to monitor validation metrics and stop training when improvement plateaus."""
+
+    def __init__(self, patience=None, min_delta=0.0001):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_score = 0.0
+        self.epochs_without_improvement = 0
+        self.should_stop = False
+
+    def __call__(self, val_score):
+        """Check if training should stop based on validation score."""
+        if self.patience is None:
+            return False
+
+        if val_score > self.best_score + self.min_delta:
+            self.best_score = val_score
+            self.epochs_without_improvement = 0
+        else:
+            self.epochs_without_improvement += 1
+
+        if self.epochs_without_improvement >= self.patience:
+            self.should_stop = True
+            return True
+        return False
+
+
 def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, loss_fn,
-    accuracy_function, device='cpu', scheduler=None):
-    '''
-    Train a model using behavior cloning.
-
-    Args:
-    - model (torch.nn.Module): The model model to train.
-    - train_dataloader (torch.utils.data.DataLoader): DataLoader providing training data.
-    - val_dataloader (torch.utils.data.DataLoader): DataLoader providing validation data.
-    - num_epochs (int): Number of epochs to train.
-    - optimizer (torch.optim.Optimizer): Optimizer for updating the model.
-    - loss_fn (callable): Loss function to compute the loss of a batch.
-    - accuracy_function (callable): Function to compute accuracy of the model.
-    - device (str): Device to run the training on ('cpu', 'cuda', or 'mps').
-    - scheduler (Optional[torch.optim.lr_scheduler._LRScheduler]): Learning rate scheduler.
-
-    Returns:
-    - model (torch.nn.Module): The trained model model.
-    - losses_train (list): List of average training losses per epoch.
-    - accuracies_validation (list): List of average validation accuracies per epoch.
-    '''
+    accuracy_function, device='cpu', scheduler=None, early_stopping_patience=None,
+    early_stopping_min_delta=0.0001):
+    """Train a model using behavior cloning with optional early stopping."""
     torch.set_default_device(device)
     model.to(device)
 
     losses_train = []
     accuracy_validation = []
+    early_stopping = EarlyStopping(early_stopping_patience, early_stopping_min_delta)
 
     progressbar = tqdm(total=num_epochs, desc="Training", unit="epoch")
     epoch_progressbar = tqdm(total=len(train_dataloader), desc="Epoch Progress", leave=False)
@@ -70,9 +81,14 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
         avg_epoch_loss = train_epoch(train_dataloader, loss_fn, model, optimizer, epoch_progressbar)
         losses_train.append(avg_epoch_loss)
 
-        # Validate after each epoch
         avg_val_accuracy = validate_model(model, val_dataloader, accuracy_function)
         accuracy_validation.append(avg_val_accuracy)
+
+        # Check early stopping
+        if early_stopping(avg_val_accuracy):
+            print(f"\nEarly stopping triggered after {epoch + 1} epochs")
+            print(f"Best validation accuracy: {early_stopping.best_score:.4f}")
+            break
 
         if scheduler is not None:
             scheduler.step(avg_epoch_loss)
@@ -80,6 +96,9 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
         epoch_progressbar.reset()
         progressbar.update(1)
         progressbar.set_postfix(train_loss=avg_epoch_loss, val_accuracy=avg_val_accuracy.item())
+
+    progressbar.close()
+    epoch_progressbar.close()
 
     return model, losses_train, accuracy_validation
 
@@ -201,7 +220,7 @@ if __name__ == '__main__':
 
     # Hyperparameters
     batch_size = 128
-    num_epochs = 5
+    num_epochs = 25
     learning_rate = 0.001
 
     # Load data
@@ -229,7 +248,9 @@ if __name__ == '__main__':
         loss_fn=bc_loss,
         accuracy_function=accuracy_fn,
         device=device,
-        scheduler=scheduler
+        scheduler=scheduler,
+        early_stopping_patience=3,  # Stop if no improvement for 3 epochs
+        early_stopping_min_delta=0.001  # Minimum improvement threshold
     )
 
     # Print results
