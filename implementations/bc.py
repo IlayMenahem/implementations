@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 
 
-def to_device_tensor(labels, data):
+def to_device_tensor(data, labels):
     if not isinstance(labels, torch.Tensor):
         labels = torch.tensor(labels, dtype=torch.long, device=data.device)
     else:
@@ -17,17 +17,17 @@ def to_device_tensor(labels, data):
     return labels
 
 
-def bc_loss(model, labels, data):
+def bc_loss(model, data, labels):
     action_preds = model(data)
-    labels = to_device_tensor(labels, data)
+    labels = to_device_tensor(data, labels)
     loss = F.cross_entropy(action_preds, labels)
 
     return loss
 
 
-def accuracy_fn(model, labels, data):
+def accuracy_fn(model, data, labels):
     action_preds = model(data)
-    labels = to_device_tensor(labels, data)
+    labels = to_device_tensor(data, labels)
     _, predicted = torch.max(action_preds, 1)
 
     correct = (predicted == labels).sum().item()
@@ -102,7 +102,7 @@ def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar):
     epoch_losses = []
 
     for data, labels in dataloader:
-        loss = loss_fn(model, labels, data)
+        loss = loss_fn(model, data, labels)
 
         optimizer.zero_grad()
         loss.backward()
@@ -135,7 +135,7 @@ def validate_model(model, dataloader, accuracy_fn):
 
     with torch.no_grad():
         for data, labels in dataloader:
-            total_accuracy += accuracy_fn(model, labels, data)
+            total_accuracy += accuracy_fn(model, data, labels)
             num_batches += 1
 
     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0.0
