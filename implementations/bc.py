@@ -30,7 +30,7 @@ def accuracy_fn(model, data, labels):
     labels = to_device_tensor(data, labels)
     _, predicted = torch.max(action_preds, 1)
 
-    correct = (predicted == labels).sum().item()
+    correct = (predicted == labels).sum()
     accuracy = correct / len(labels)
 
     return accuracy
@@ -79,7 +79,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
 
         epoch_progressbar.reset()
         progressbar.update(1)
-        progressbar.set_postfix(train_loss=avg_epoch_loss, val_accuracy=avg_val_accuracy)
+        progressbar.set_postfix(train_loss=avg_epoch_loss, val_accuracy=avg_val_accuracy.item())
 
     return model, losses_train, accuracy_validation
 
