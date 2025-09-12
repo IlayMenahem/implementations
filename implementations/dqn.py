@@ -6,7 +6,6 @@ from collections import namedtuple
 from tqdm import tqdm
 import gymnasium as gym
 import copy
-from implementations.utils import plot_learning_process, validate
 
 Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state', 'done'))
 
@@ -139,14 +138,7 @@ def train_dqn(env, replay_buffer, target_update_freq: int, gamma: float, q_netwo
         if step % target_update_freq == 0:
             target_network.load_state_dict(q_network.state_dict())
 
-        # Validation
-        with torch.no_grad():
-            vals = [validate(val_env, target_network) for _ in range(val_episodes)]
-            val_rewards.append(np.mean(vals))
-
         progress_bar.update(1)
-
-    plot_learning_process(rewards, losses, val_rewards)
 
     return losses, rewards, q_network
 
