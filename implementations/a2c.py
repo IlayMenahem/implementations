@@ -35,10 +35,8 @@ def rollout(env, policy, critic, n_steps, device):
     actual_steps = 0
 
     for step in range(n_steps):
-        state_tensor = torch.tensor(state, dtype=torch.float32, device=device)
-
-        probs = policy(state_tensor)
-        value = critic(state_tensor).squeeze()
+        probs = policy(state)
+        value = critic(state).squeeze()
 
         dist = torch.distributions.Categorical(probs=probs)
         action = dist.sample()
@@ -71,8 +69,7 @@ def rollout(env, policy, critic, n_steps, device):
     if done:
         next_value = torch.tensor(0.0, device=device)
     else:
-        next_state_tensor = torch.tensor(next_state, dtype=torch.float32, device=device)
-        next_value = critic(next_state_tensor).squeeze()
+        next_value = critic(next_state).squeeze()
 
     return log_probs, values, rewards, entropies, dones, next_value, rewards.sum().item()
 
@@ -153,6 +150,8 @@ if __name__ == "__main__":
             )
 
         def forward(self, x):
+            if not isinstance(x, torch.Tensor):
+                x = torch.as_tensor(x, dtype=torch.float32, device=next(self.parameters()).device)
             return self.fc(x)
 
     class CriticNet(nn.Module):
@@ -167,6 +166,8 @@ if __name__ == "__main__":
             )
 
         def forward(self, x):
+            if not isinstance(x, torch.Tensor):
+                x = torch.as_tensor(x, dtype=torch.float32, device=next(self.parameters()).device)
             return self.fc(x)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

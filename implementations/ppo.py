@@ -20,12 +20,10 @@ def compute_gae(rewards: list[float], values: list[float], dones: list[bool], ga
 
 
 def ppo_update(actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim.Optimizer,
-    optimizer_critic: torch.optim.Optimizer, states: torch.Tensor, actions: torch.Tensor, old_log_probs: torch.Tensor,
+    optimizer_critic: torch.optim.Optimizer, states: list, actions: torch.Tensor, old_log_probs: torch.Tensor,
     returns: torch.Tensor, advantages: torch.Tensor, clip_epsilon: float, entropy_coeff: float, value_loss_coeff: float,
     clip_range_vf: float, max_grad_norm: float, target_kl: float, device: torch.device) -> tuple[float, float, float, float]:
 
-    # Move all tensors to device
-    states = states.to(device)
     actions = actions.to(device)
     old_log_probs = old_log_probs.to(device)
     returns = returns.to(device)
@@ -67,7 +65,7 @@ def ppo_update(actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim
     return policy_loss.item(), value_loss.item(), entropy.item(), approx_kl
 
 
-def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batch_size: int, gamma: float, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, list[float], list[bool], torch.Tensor, torch.Tensor, float]:
+def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batch_size: int, gamma: float, device: torch.device) -> tuple[list, torch.Tensor, list[float], list[bool], torch.Tensor, torch.Tensor, float]:
     states, actions, rewards, dones, log_probs, values = [], [], [], [], [], []
     episode_rewards: list[float] = []
     ep_reward: float = 0
@@ -78,13 +76,11 @@ def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batc
     pbar = tqdm(total=batch_size, desc="Collecting trajectories", leave=False)
     with torch.no_grad():
         for _ in range(batch_size):
-            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-
-            probs = actor(state_tensor)
+            probs = actor(state)
             dist = Categorical(probs=probs)
             action = dist.sample()
             log_prob: float = dist.log_prob(action).item()
-            value: float = critic(state_tensor).item()
+            value: float = critic(state).item()
 
             next_state, reward, terminated, truncated, _ = env.step(action.item())
             done = terminated or truncated
@@ -109,19 +105,17 @@ def collect_trajectories(env: gym.Env, actor: nn.Module, critic: nn.Module, batc
     pbar.close()
     avg_reward: float = sum(episode_rewards) / len(episode_rewards) if episode_rewards else 0
 
-    # Convert to batched tensors
-    states_tensor = torch.tensor(np.array(states), dtype=torch.float32)
     actions_tensor = torch.tensor(actions, dtype=torch.long)
     log_probs_tensor = torch.tensor(log_probs, dtype=torch.float32)
     values_tensor = torch.tensor(values, dtype=torch.float32)
 
-    return states_tensor, actions_tensor, rewards, dones, log_probs_tensor, values_tensor, avg_reward
+    return states, actions_tensor, rewards, dones, log_probs_tensor, values_tensor, avg_reward
 
 
 def train_ppo(env: gym.Env, actor: nn.Module, critic: nn.Module, optimizer_actor: torch.optim.Optimizer,
     optimizer_critic: torch.optim.Optimizer, batch_size: int, num_epochs: int, gamma: float,
     clip_epsilon: float, gae_lambda: float, entropy_coeff: float, value_loss_coeff: float,
-    clip_range_vf: float, target_kl: float, max_grad_norm: float, device: torch.device)-> tuple[nn.Module, nn.Module]:
+    clip_range_vf: float, target_kl: float, max_grad_norm: float, device: torch.device) -> tuple[nn.Module, nn.Module]:
 
     actor.to(device)
     critic.to(device)
@@ -206,8 +200,12 @@ if __name__ == "__main__":
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
 
-    actor = Actor(state_dim, action_dim)
-    critic = Critic(state_dim)
+    # For flexible state handling, we'll set a reasonable default size
+    # The networks will dynamically adjust their input size based on actual states
+    default_state_dim = state_dim
+
+    actor = Actor(default_state_dim, action_dim)
+    critic = Critic(default_state_dim)
     optimizer_actor = torch.optim.Adam(actor.parameters(), lr=3e-4)
     optimizer_critic = torch.optim.Adam(critic.parameters(), lr=1e-3)
 
