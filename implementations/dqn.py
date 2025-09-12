@@ -96,8 +96,7 @@ def epsilon_schedule(step: int, start: float = 1.0, end: float = 0.05, decay_ste
 
 
 def train_dqn(env, replay_buffer, target_update_freq: int, gamma: float, q_network: nn.Module,
-              optimizer, num_steps: int, batch_size: int, device=torch.device('cpu'), max_grad_norm=1.0,
-              val_env=None, validate_freq: int = 5000, val_episodes: int = 5):
+              optimizer, num_steps: int, batch_size: int, device=torch.device('cpu'), max_grad_norm=1.0):
 
     q_network = q_network.to(device)
     target_network = copy.deepcopy(q_network).to(device)
