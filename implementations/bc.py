@@ -25,6 +25,7 @@ def bc_loss(model, data, labels):
     return loss
 
 
+@torch.no_grad()
 def accuracy_fn(model, data, labels):
     action_preds = model(data)
     labels = to_device_tensor(data, labels)
@@ -205,8 +206,8 @@ if __name__ == '__main__':
         )
 
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+        val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
         return train_loader, val_loader
 
@@ -219,7 +220,7 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
 
     # Hyperparameters
-    batch_size = 128
+    batch_size = 512
     num_epochs = 25
     learning_rate = 0.001
 
