@@ -43,7 +43,7 @@ class EarlyStopping:
     def __init__(self, patience=None, min_delta=0.0001):
         self.patience = patience
         self.min_delta = min_delta
-        self.best_score = 0.0
+        self.best_score = -float('inf')
         self.epochs_without_improvement = 0
         self.should_stop = False
 
