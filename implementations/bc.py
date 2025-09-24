@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import os
 
 
 def bc_loss(model, data, labels):
@@ -22,8 +23,8 @@ def accuracy_fn(model, data, labels):
     labels = labels.to(torch.long)
     _, predicted = torch.max(action_preds, 1)
 
-    correct = (predicted == labels).sum()
-    accuracy = correct / len(labels)
+    correct = (predicted == labels).sum().item()
+    accuracy = float(correct) / len(labels)
 
     return accuracy
 
@@ -57,9 +58,12 @@ class EarlyStopping:
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, loss_fn,
     accuracy_function, device='cpu', scheduler=None, early_stopping_patience=None,
-    early_stopping_min_delta=0.0001):
-    """Train a model using behavior cloning with optional early stopping."""
+    early_stopping_min_delta=0.0001, data_parallel=False):
+    """Train a model using behavior cloning with optional early stopping and optional multi-GPU DataParallel."""
     torch.set_default_device(device)
+    # Optional multi-GPU support via DataParallel
+    if data_parallel and device.startswith('cuda') and torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
     model.to(device)
 
     losses_train = []
@@ -70,10 +74,10 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
     epoch_progressbar = tqdm(total=len(train_dataloader), desc="Epoch Progress", leave=False)
 
     for epoch in range(num_epochs):
-        avg_epoch_loss = train_epoch(train_dataloader, loss_fn, model, optimizer, epoch_progressbar)
+        avg_epoch_loss = train_epoch(train_dataloader, loss_fn, model, optimizer, epoch_progressbar, device)
         losses_train.append(avg_epoch_loss)
 
-        avg_val_accuracy = validate_model(model, val_dataloader, accuracy_function)
+        avg_val_accuracy = validate_model(model, val_dataloader, accuracy_function, device)
         accuracy_validation.append(avg_val_accuracy)
 
         # Check early stopping
@@ -87,7 +91,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
 
         epoch_progressbar.reset()
         progressbar.update(1)
-        progressbar.set_postfix(train_loss=avg_epoch_loss, val_accuracy=avg_val_accuracy.item())
+        progressbar.set_postfix(train_loss=avg_epoch_loss, val_accuracy=avg_val_accuracy)
 
     progressbar.close()
     epoch_progressbar.close()
@@ -95,7 +99,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
     return model, losses_train, accuracy_validation
 
 
-def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar):
+def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar, device):
     '''
     Train the model for one epoch.
 
@@ -113,6 +117,8 @@ def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar):
     epoch_losses = []
 
     for data, labels in dataloader:
+        data = data.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
         loss = loss_fn(model, data, labels)
 
         optimizer.zero_grad()
@@ -128,7 +134,8 @@ def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar):
     return avg_epoch_loss
 
 
-def validate_model(model, dataloader, accuracy_fn):
+@torch.no_grad()
+def validate_model(model, dataloader, accuracy_fn, device):
     '''
     Validate the model on a validation dataset.
 
@@ -144,10 +151,11 @@ def validate_model(model, dataloader, accuracy_fn):
     total_accuracy = 0.0
     num_batches = 0
 
-    with torch.no_grad():
-        for data, labels in dataloader:
-            total_accuracy += accuracy_fn(model, data, labels)
-            num_batches += 1
+    for data, labels in dataloader:
+        data = data.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
+        total_accuracy += accuracy_fn(model, data, labels)
+        num_batches += 1
 
     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0.0
 
@@ -179,24 +187,16 @@ if __name__ == '__main__':
     def load_mnist_data(batch_size=64, data_dir='./data'):
         """Load MNIST dataset and return train/val dataloaders."""
 
-        # Define transforms
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
         ])
 
-        # Load datasets
-        train_dataset = torchvision.datasets.MNIST(
-            root=data_dir, train=True, download=True, transform=transform
-        )
+        train_dataset = torchvision.datasets.MNIST(data_dir, True, transform, download=True)
+        test_dataset = torchvision.datasets.MNIST(data_dir, False, transform, download=True)
 
-        test_dataset = torchvision.datasets.MNIST(
-            root=data_dir, train=False, download=True, transform=transform
-        )
-
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-        val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size, True, num_workers=2, pin_memory=True, persistent_workers=True)
+        val_loader = DataLoader(test_dataset, batch_size, False, num_workers=2, pin_memory=True, persistent_workers=True)
 
         return train_loader, val_loader
 
@@ -227,7 +227,8 @@ if __name__ == '__main__':
         device=device,
         scheduler=scheduler,
         early_stopping_patience=3,  # Stop if no improvement for 3 epochs
-        early_stopping_min_delta=0.001  # Minimum improvement threshold
+        early_stopping_min_delta=0.001,  # Minimum improvement threshold
+        data_parallel=(torch.cuda.is_available() and torch.cuda.device_count() > 1)
     )
 
     # Print results
