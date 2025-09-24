@@ -8,18 +8,9 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 
 
-def to_device_tensor(data, labels):
-    if not isinstance(labels, torch.Tensor):
-        labels = torch.tensor(labels, dtype=torch.long, device=data.device)
-    else:
-        labels = labels.to(device=data.device, dtype=torch.long)
-
-    return labels
-
-
 def bc_loss(model, data, labels):
     action_preds = model(data)
-    labels = to_device_tensor(data, labels)
+    labels = labels.to(torch.long)
     loss = F.cross_entropy(action_preds, labels)
 
     return loss
@@ -28,7 +19,7 @@ def bc_loss(model, data, labels):
 @torch.no_grad()
 def accuracy_fn(model, data, labels):
     action_preds = model(data)
-    labels = to_device_tensor(data, labels)
+    labels = labels.to(torch.long)
     _, predicted = torch.max(action_preds, 1)
 
     correct = (predicted == labels).sum()
@@ -163,7 +154,6 @@ def validate_model(model, dataloader, accuracy_fn):
     return avg_accuracy
 
 
-
 if __name__ == '__main__':
     class SimpleMNISTModel(nn.Module):
         """Simple CNN model for MNIST classification."""
@@ -185,7 +175,6 @@ if __name__ == '__main__':
             x = self.dropout(x)
             x = self.fc2(x)
             return x
-
 
     def load_mnist_data(batch_size=64, data_dir='./data'):
         """Load MNIST dataset and return train/val dataloaders."""
@@ -211,30 +200,17 @@ if __name__ == '__main__':
 
         return train_loader, val_loader
 
-    # Example usage with MNIST dataset
-    print("Behavior Cloning Example with MNIST")
-    print("=" * 40)
 
-    # Set device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
-
-    # Hyperparameters
     batch_size = 512
     num_epochs = 25
     learning_rate = 0.001
 
-    # Load data
-    print("Loading MNIST dataset...")
     train_loader, val_loader = load_mnist_data(batch_size=batch_size)
-    print(f"Training samples: {len(train_loader.dataset)}")
-    print(f"Validation samples: {len(val_loader.dataset)}")
-
-    # Create model
     model = SimpleMNISTModel(num_classes=10)
+
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Setup optimizer
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
 
@@ -259,22 +235,3 @@ if __name__ == '__main__':
     print(f"Final training loss: {train_losses[-1]:.4f}")
     print(f"Final validation accuracy: {val_accuracies[-1]:.4f}")
     print(f"Best validation accuracy: {max(val_accuracies):.4f}")
-
-    # Test final model
-    print("\nEvaluating on test set...")
-    final_accuracy = validate_model(trained_model, val_loader, accuracy_fn)
-    print(f"Test accuracy: {final_accuracy:.4f}")
-
-    # Example prediction
-    print("\nExample prediction:")
-    trained_model.eval()
-    with torch.no_grad():
-        data_iter = iter(val_loader)
-        images, labels = next(data_iter)
-        images, labels = images.to(device), labels.to(device)
-
-        outputs = trained_model(images[:5])  # First 5 samples
-        _, predicted = torch.max(outputs, 1)
-
-        print("True labels:", labels[:5].cpu().numpy())
-        print("Predictions:", predicted.cpu().numpy())
