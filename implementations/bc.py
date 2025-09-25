@@ -6,27 +6,21 @@ from torch.utils.data import DataLoader
 import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
-import os
+import matplotlib.pyplot as plt
+import numpy as np
 
 
-def bc_loss(model, data, labels):
+
+def loss_and_accuracy(model, data, labels):
     action_preds = model(data)
     labels = labels.to(torch.long)
     loss = F.cross_entropy(action_preds, labels)
-
-    return loss
-
-
-@torch.no_grad()
-def accuracy_fn(model, data, labels):
-    action_preds = model(data)
-    labels = labels.to(torch.long)
     _, predicted = torch.max(action_preds, 1)
 
     correct = (predicted == labels).sum().item()
     accuracy = float(correct) / len(labels)
 
-    return accuracy
+    return loss, accuracy
 
 
 class EarlyStopping:
@@ -56,31 +50,33 @@ class EarlyStopping:
         return False
 
 
-def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, loss_fn,
-    accuracy_function, device='cpu', scheduler=None, early_stopping_patience=None,
-    early_stopping_min_delta=0.0001, data_parallel=False):
+def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, loss_and_accuracy, device='cpu',
+    scheduler=None, early_stopping_patience=None, early_stopping_min_delta=0.0001, data_parallel=False):
     """Train a model using behavior cloning with optional early stopping and optional multi-GPU DataParallel."""
     torch.set_default_device(device)
-    # Optional multi-GPU support via DataParallel
     if data_parallel and device.startswith('cuda') and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
     model.to(device)
 
     losses_train = []
+    accuracy_train = []
+    losses_validation = []
     accuracy_validation = []
+
     early_stopping = EarlyStopping(early_stopping_patience, early_stopping_min_delta)
 
     progressbar = tqdm(total=num_epochs, desc="Training", unit="epoch")
     epoch_progressbar = tqdm(total=len(train_dataloader), desc="Epoch Progress", leave=False)
 
     for epoch in range(num_epochs):
-        avg_epoch_loss = train_epoch(train_dataloader, loss_fn, model, optimizer, epoch_progressbar, device)
-        losses_train.append(avg_epoch_loss)
+        avg_epoch_loss, avg_epoch_accuracy = train_epoch(train_dataloader, loss_and_accuracy, model, optimizer, epoch_progressbar, device)
+        avg_val_loss, avg_val_accuracy = validate_model(model, val_dataloader, loss_and_accuracy, device)
 
-        avg_val_accuracy = validate_model(model, val_dataloader, accuracy_function, device)
+        losses_train.append(avg_epoch_loss)
+        accuracy_train.append(avg_epoch_accuracy)
+        losses_validation.append(avg_val_loss)
         accuracy_validation.append(avg_val_accuracy)
 
-        # Check early stopping
         if early_stopping(avg_val_accuracy):
             print(f"\nEarly stopping triggered after {epoch + 1} epochs")
             print(f"Best validation accuracy: {early_stopping.best_score:.4f}")
@@ -96,10 +92,10 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, optimizer, 
     progressbar.close()
     epoch_progressbar.close()
 
-    return model, losses_train, accuracy_validation
+    return model, losses_train, accuracy_train, losses_validation, accuracy_validation
 
 
-def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar, device):
+def train_epoch(dataloader, loss_and_accuracy, model, optimizer, epoch_progressbar, device):
     '''
     Train the model for one epoch.
 
@@ -115,27 +111,30 @@ def train_epoch(dataloader, loss_fn, model, optimizer, epoch_progressbar, device
     '''
     model.train()
     epoch_losses = []
+    epoch_accuracies = []
 
     for data, labels in dataloader:
         data = data.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        loss = loss_fn(model, data, labels)
+        loss, accuracy = loss_and_accuracy(model, data, labels)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         epoch_losses.append(loss.item())
+        epoch_accuracies.append(accuracy)
         epoch_progressbar.update(1)
         epoch_progressbar.set_postfix(loss=loss.item())
 
-    avg_epoch_loss = sum(epoch_losses) / len(epoch_losses)
+    avg_epoch_loss = np.mean(epoch_losses)
+    avg_epoch_accuracy = np.mean(epoch_accuracies)
 
-    return avg_epoch_loss
+    return avg_epoch_loss, avg_epoch_accuracy
 
 
 @torch.no_grad()
-def validate_model(model, dataloader, accuracy_fn, device):
+def validate_model(model, dataloader, loss_and_accuracy, device):
     '''
     Validate the model on a validation dataset.
 
@@ -149,17 +148,22 @@ def validate_model(model, dataloader, accuracy_fn, device):
     '''
     model.eval()
     total_accuracy = 0.0
+    total_loss = 0.0
     num_batches = 0
 
     for data, labels in dataloader:
         data = data.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        total_accuracy += accuracy_fn(model, data, labels)
+        loss, accuracy = loss_and_accuracy(model, data, labels)
+
+        total_accuracy += accuracy
+        total_loss += loss.item()
         num_batches += 1
 
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0.0
 
-    return avg_accuracy
+    return avg_loss, avg_accuracy
 
 
 if __name__ == '__main__':
@@ -184,7 +188,7 @@ if __name__ == '__main__':
             x = self.fc2(x)
             return x
 
-    def load_mnist_data(batch_size=64, data_dir='./data'):
+    def load_mnist_data(batch_size, data_dir='./data'):
         """Load MNIST dataset and return train/val dataloaders."""
 
         transform = transforms.Compose([
@@ -203,10 +207,10 @@ if __name__ == '__main__':
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     batch_size = 512
-    num_epochs = 25
+    num_epochs = 5
     learning_rate = 0.001
 
-    train_loader, val_loader = load_mnist_data(batch_size=batch_size)
+    train_loader, val_loader = load_mnist_data(batch_size)
     model = SimpleMNISTModel(num_classes=10)
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -216,23 +220,34 @@ if __name__ == '__main__':
 
     # Train model using behavior cloning
     print("\nStarting training...")
-    trained_model, train_losses, val_accuracies = train_model(
-        model=model,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
-        num_epochs=num_epochs,
-        optimizer=optimizer,
-        loss_fn=bc_loss,
-        accuracy_function=accuracy_fn,
-        device=device,
-        scheduler=scheduler,
-        early_stopping_patience=3,  # Stop if no improvement for 3 epochs
-        early_stopping_min_delta=0.001,  # Minimum improvement threshold
-        data_parallel=(torch.cuda.is_available() and torch.cuda.device_count() > 1)
-    )
+    trained_model, train_losses, train_accuracies, val_losses, val_accuracies = train_model(model, train_loader, val_loader, num_epochs, optimizer,
+        loss_and_accuracy, device, scheduler, 3, 0.001, (torch.cuda.is_available() and torch.cuda.device_count() > 1))
 
-    # Print results
-    print("\nTraining completed!")
-    print(f"Final training loss: {train_losses[-1]:.4f}")
-    print(f"Final validation accuracy: {val_accuracies[-1]:.4f}")
-    print(f"Best validation accuracy: {max(val_accuracies):.4f}")
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    epochs = range(1, len(train_losses) + 1)
+    ax1.plot(epochs, train_losses, 'b-', label='Training Loss')
+    ax1.plot(epochs, val_losses, 'r-', label='Validation Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True)
+
+    ax2.plot(epochs, train_accuracies, 'b-', label='Training Accuracy')
+    ax2.plot(epochs, val_accuracies, 'r-', label='Validation Accuracy')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+    # Print final metrics
+    print(f"\nFinal Training Loss: {train_losses[-1]:.4f}")
+    print(f"Final Training Accuracy: {train_accuracies[-1]:.4f}")
+    print(f"Final Validation Loss: {val_losses[-1]:.4f}")
+    print(f"Final Validation Accuracy: {val_accuracies[-1]:.4f}")
