@@ -14,6 +14,22 @@ from ray import tune
 from ray.tune.schedulers import ASHAScheduler
 
 
+def get_device() -> str:
+    """
+    Get the best available device for PyTorch.
+    Priority: CUDA > MPS > CPU
+
+    Returns:
+        str: Device string ('cuda', 'mps', or 'cpu')
+    """
+    if torch.cuda.is_available():
+        return 'cuda'
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return 'mps'
+    else:
+        return 'cpu'
+
+
 def loss_and_accuracy(model: nn.Module, data: torch.Tensor, labels: torch.Tensor) -> tuple[torch.Tensor, float]:
     action_preds = model(data)
     labels = labels.to(torch.long)
@@ -120,9 +136,12 @@ def train_model(model: nn.Module, train_dataloader: DataLoader, val_dataloader: 
                          train_accuracy, val_accuracy)
         You can use this to forward metrics to Ray Tune via tune.report().
     """
-    torch.set_default_device(device)
-    if data_parallel and device.startswith('cuda') and torch.cuda.device_count() > 1:
+    if device == 'cuda':
+        torch.set_default_device(device)
+
+    if data_parallel and device == 'cuda' and torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
+
     model.to(device)
 
     losses_train = []
@@ -222,7 +241,7 @@ def tune_hyperparameters(config: dict[str, Any], gpus_per_trial: float = 0.0):
 
         loss_and_accuracy_fn = parameters["loss_and_accuracy"]
 
-        device = 'cuda' if (torch.cuda.is_available() and gpus_per_trial > 0) else 'cpu'
+        device = 'cuda' if (torch.cuda.is_available() and gpus_per_trial > 0) else get_device()
 
         def reporter(epoch_idx: int, train_loss: float, val_loss: float, train_acc: float, val_acc: float):
             current_lr = optimizer.param_groups[0]["lr"]
@@ -239,7 +258,7 @@ def tune_hyperparameters(config: dict[str, Any], gpus_per_trial: float = 0.0):
         train_model(model, train_loader, val_loader, num_epochs, optimizer, loss_and_accuracy_fn,
             device, scheduler=None, early_stopping_patience=early_stopping_patience,
             early_stopping_min_delta=early_stopping_min_delta,
-            data_parallel=(device.startswith('cuda') and torch.cuda.device_count() > 1),
+            data_parallel=(device == 'cuda' and torch.cuda.device_count() > 1),
             epoch_reporter=reporter
         )
 
@@ -308,13 +327,17 @@ if __name__ == '__main__':
         train_dataset = torchvision.datasets.MNIST(data_dir, True, transform, download=True)
         test_dataset = torchvision.datasets.MNIST(data_dir, False, transform, download=True)
 
-        train_loader = DataLoader(train_dataset, batch_size, True, num_workers=num_workers, pin_memory=True, persistent_workers=True)
-        val_loader = DataLoader(test_dataset, batch_size, False, num_workers=num_workers, pin_memory=True, persistent_workers=True)
+        device = get_device()
+        use_pin_memory = (device == 'cuda')
+        use_persistent = num_workers > 0
+
+        train_loader = DataLoader(train_dataset, batch_size, True, num_workers=num_workers, pin_memory=use_pin_memory, persistent_workers=use_persistent)
+        val_loader = DataLoader(test_dataset, batch_size, False, num_workers=num_workers, pin_memory=use_pin_memory, persistent_workers=use_persistent)
 
         return train_loader, val_loader
 
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
     base_batch_size = 512
     base_epochs = 5
     base_learning_rate = 0.001
@@ -332,7 +355,7 @@ if __name__ == '__main__':
         model, train_loader, val_loader, base_epochs, optimizer,
         loss_and_accuracy, device, scheduler,
         early_stopping_patience=3, early_stopping_min_delta=0.001,
-        data_parallel=(torch.cuda.is_available() and torch.cuda.device_count() > 1)
+        data_parallel=(device == 'cuda' and torch.cuda.device_count() > 1)
     )
 
     # Plot learning curves
