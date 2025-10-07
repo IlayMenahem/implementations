@@ -10,13 +10,19 @@ def plot_learning_process(*lists):
     - *lists: A variable number of lists containing values to plot.
 
     '''
-    plt.figure(figsize=(20, 10))
+    num_plots = len(lists)
+    fig, axes = plt.subplots(num_plots, 1, figsize=(10, 6 * num_plots))
+
+    # Handle case where there's only one list (axes won't be an array)
+    if num_plots == 1:
+        axes = [axes]
 
     for i, vals in enumerate(lists):
-        plt.plot(vals, label=f'Series {i+1}')
+        axes[i].plot(vals, label=f'Series {i+1}')
+        axes[i].legend()
+        axes[i].grid(True)
 
-    plt.legend()
-    plt.grid(True)
+    plt.tight_layout()
     plt.show()
 
 
